@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Line-Following Robot Project</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: auto;
+            line-height: 1.5;
+        }
+
+        h1,
+        h2 {
+            color: #333;
+        }
+
+        ul {
+            margin-left: 1.2em;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 0.5em;
+            text-align: left;
+        }
+
+        th {
+            background: #f5f5f5;
+        }
+
+        .code-font {
+            font-family: monospace;
+        }
+
+        .comment-font {
+            font-family: sans-serif;
+            font-style: italic;
+            color: #555;
+        }
+
+        /* Page container */
+        .container {
+            background: #fff;
+            max-width: 900px;
+            margin: 2em auto;
+            padding: 2em;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Page background */
+        body {
+            background: #f0f2f5;
+        }
+
+        /* Headings */
+        h1 {
+            border-bottom: 3px solid #4a90e2;
+            padding-bottom: 0.3em;
+            margin-top: 0;
+        }
+
+        h2 {
+            color: #4a90e2;
+            margin-top: 1.5em;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 0.2em;
+        }
+
+        /* Lists */
+        ul,
+        ol {
+            margin-left: 1.5em;
+        }
+
+        /* Code block styling */
+        pre {
+            background: #f7f9fc;
+            padding: 1em;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        code {
+            font-size: 0.95em;
+        }
+
+        /* Table zebra stripes */
+        table tbody tr:nth-child(odd) {
+            background: #fafafa;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1> Line-Following Robot Project</h1>
+        <h2>Goals</h2>
+        <p>Design and implement a robust line-following robot on Raspberry Pi that can:</p>
+        <ul>
+            <li>Accurately stay on a track using grayscale sensors</li>
+            <li>Handle intersections and edge cases (missing line, sharp turns)</li>
+            <li>Recover when stuck and smoothly navigate various layouts</li>
+        </ul>
+
+        <h2>Recreation Instructions</h2>
+        <h3>Hardware Prerequisites</h3>
+        <ul>
+            <li>Raspberry Pi </li>
+            <li>Picar-X chassis with motors and grayscale sensors</li>
+            <li>Wires, jumper cables, power supply</li>
+        </ul>
+        <h3>Software Setup</h3>
+        <ol>
+            <li>Make an account and connect to the Raspberry Pi via
+                <pre>https://connect.raspberrypi.com</pre>
+                <p>Use the credentials: <code>username: picar3</code>, <code>password: raspberry</code></p>
+            </li>
+            <li>Update the robot OS:
+                <pre>sudo update</pre>
+            </li>
+            <li>Install Python dependencies:
+                <pre>sudo apt install python3-pip python3-opencv
+        pip3 install picarx</pre>
+            </li>
+            <li>Calibrate grayscale sensors:
+                <pre>python3 grayscale_calibration.py</pre>
+                Use the generated values in <code>line_following.py</code>.
+            </li>
+            <li>Run the line-following script located in the <code>~/picarx/examples</code> directory:
+                <pre>python3 line_following.py</pre>
+            </li>
+        </ol>
+
+        <h2>Code & Usage</h2>
+        <p>The main script is <code>line_following.py</code>. It includes:</p>
+        <ul>
+            <li>Turn smoothing logic</li>
+            <li>Intersection detection with timed pauses</li>
+            <li>Directional priority (straight > left > right)</li>
+            <li>Extensive debug logging to <code>robot.log</code></li>
+        </ul>
+
+        <h3> Our Line Line-Following Code</h3>
+        <pre><code class="language-python code-font">
+<!-- Line-Following Code Section -->
+<pre><code class="language-python code-font">
+
+# Authors: L.O.R.D. Robotics -> Lorenzo Zullo, Onil Morshed, Rajwat Singh, Dan Nguyen 
+# Date: Spring 2025 
+# Course: CS 371 - Artificial Intelligence
+# Description: Line-following robot code for PicarX chassis
+# This code implements a line-following robot using grayscale sensors
+# The robot can navigate intersections and recover from sharp turns
+
+
+
+# --- Line Following Robot Code ---
+
+from picarx import Picarx   # PicarX library to interface with the PiCar chassis
+from time import sleep       # sleep for adding delays
+import random                # random for picking intersection exits
+
+# --- Initialization and Calibration ---
+px = Picarx()                              # Create controller instance
+px.set_line_reference([1400, 1400, 1400])  # Set the grayscale thresholds for left, center, right sensors
+
+# --- Global State & Parameters ---
+current_state = None       # Holds the most recent detected driving state
+correction = 10            # Angle (°) to gently correct when off line
+px_power = 2               # Motor power for forward movement
+px_back = 3                # Motor power for backward movement
+offset = 45                # Larger angle (°) for sharper recovery turns
+last_state = "stop"        # Last valid non-stop state, used for recovery
+intersection_counter = 0   # Frames counted where all sensors see the line
+intersection_threshold = 2 # Frames required to confirm an intersection
+
+def outHandle():
+    """Recovery handler: if we lose the line, steer back toward where we last were."""
+    global last_state, current_state
+    if last_state == 'left':
+        # If last we were veering left, gently steer left while moving forward
+        px.set_dir_servo_angle(-correction)
+        px.forward(px_power)
+    elif last_state == 'right':
+        # If last we were veering right, gently steer right while moving forward
+        px.set_dir_servo_angle(correction)
+        px.forward(px_power)
+    # Short pause to let sensors update
+    sleep(0.01)
+
+def get_status(val_list):
+    """Return the robot’s next move state based on sensor readings."""
+    global intersection_counter
+    _state = px.get_line_status(val_list)  # e.g. [1, 0, 1]
+
+    # 1) Intersection: all three sensors detect the line
+    if _state == [1, 1, 1]:
+        intersection_counter += 1
+        return 'intersect'
+
+    # 2) Standard line-following:
+    if _state == [0, 1, 0]:
+        return 'forward'        # perfectly centered
+    elif _state == [1, 1, 0]:
+        return 'turn_left'      # left sensor & center see line; need sharper left
+    elif _state == [0, 1, 1]:
+        return 'turn_right'     # center & right see line; need sharper right
+    elif _state[2] == 1:
+        return 'right'          # only right sensor sees line; gentle right
+    elif _state[0] == 1:
+        return 'left'           # only left sensor sees line; gentle left
+
+    # 3) No line detected
+    return 'stop'
+
+def adjust_turn_direction(gm_state):
+    """Perform steering maneuvers based on the given state."""
+    if gm_state == 'left':
+        # Gentle left for adjusting to small deviations
+        px.set_dir_servo_angle(-correction)
+        px.forward(px_power)
+    elif gm_state == 'right':
+        # Gentle right for adjusting to small deviations
+        px.set_dir_servo_angle(correction)
+        px.forward(px_power)
+    elif gm_state == 'turn_left':
+        # Left turn 
+        print("Turning left")
+        px.set_dir_servo_angle(offset)
+        px.backward(px_back)
+        sleep(0.4)
+        px.set_dir_servo_angle(-offset)
+        px.forward(px_power)
+        sleep(0.5)
+    elif gm_state == 'turn_right':
+        # Right turn 
+        print("Turn right")
+        px.set_dir_servo_angle(-offset)
+        px.backward(px_back)
+        sleep(0.2)
+        px.set_dir_servo_angle(int(0.7 * offset))
+        px.forward(px_power)
+        sleep(1.2)
+
+    # Small pause to stabilize sensor readings
+    sleep(0.01)
+
+def intersection():
+    # Return straight when at an intersection to show that we found it 
+    return 'straight'
+
+# --- Main Loop ---
+if __name__ == '__main__':
+    try:
+        while True:
+            # 1) Read sensors and decide state
+            gm_val_list = px.get_grayscale_data()
+            gm_state = get_status(gm_val_list)
+            print(f"gm_val_list: {gm_val_list}, state: {gm_state}")
+
+            # 2) If recovering from a sharp turn, keep going straight until we see a new signal
+            if last_state == 'turn_left' and gm_state != 'right':
+                px.forward(px_power)
+                continue
+            elif last_state == 'turn_right' and gm_state != 'left':
+                px.forward(px_power)
+                continue
+
+            # 3) Update last_state when not stopped
+            if gm_state != "stop":
+                last_state = gm_state
+
+            # 4) Handle intersection behavior
+            if gm_state == 'intersect':
+                sleep(0.1)
+                px.set_dir_servo_angle(0)     # face forward
+                px.backward(px_back)          # back up slightly to show we are at an intersection
+                sleep(0.6)
+                direction = intersection()     # pick exit
+                print("interDir:", direction)
+                if direction == 'forward':
+                    px.set_dir_servo_angle(0)
+                    px.forward(px_power)
+                    sleep(2.5) # go forward for a bit
+                else:
+                    adjust_turn_direction(direction)
+                last_state = direction
+                continue
+
+            # 5) Execute normal movements
+            if gm_state == 'forward':
+                px.set_dir_servo_angle(0)
+                px.forward(px_power)
+            elif gm_state in ('turn_left', 'turn_right', 'left', 'right'):
+                adjust_turn_direction(gm_state)
+            else:
+                # Lost line: try recovery handler
+                outHandle()
+
+    finally:
+        # On exit (e.g., Ctrl+C), stop all motors cleanly
+        px.stop()
+        print("stop and exit")
+        sleep(0.1)
+
+        </code></pre>
+
+        </code></pre>
+
+
+
+
+        <h2>Functionality Assessment</h2>
+        <p>Our robot consistently executes fluid, precise turns and reliably detects and navigates intersections without
+            hesitation, though occasional sensor noise can introduce brief misreadings that can lead to minor errors.
+        </p>
+
+        <h2>Suggestions for Future Groups</h2>
+        <ul>
+            <li>Spend ample time understanding the robot; how it reads turns and its greyscale data.</li>
+            <li>Familiarize yourself with the PicarX library and its functions.</li>
+            <li>Recognize that the robot's forward and reverse movements are primarily controlled by the duration of the
+                <code>sleep()</code> call, not just motor power settings.
+            </li>
+            <li>Run the <code>pi/picar_x/examples/untitled.pi</code> file to track and undestand how the robot's
+                greyscale functions.</li>
+            <li>Test the robot on various tracks to identify and resolve edge cases.</li>
+            <li>Use debug print statements to fine-tune turn timing and sensor thresholds.</li>
+            <li>Document your code thoroughly—future teams will benefit greatly.</li>
+        </ul>
+
+        <h2>Possible Next Steps</h2>
+        <ul>
+            <li>Integrate camera-based vision for more complex path recognition (wider/shorter turns).</li>
+            <li>Implement dynamic lane switching to handle branching paths or multiple tracks.</li>
+            <li>Add speed modulation based on track curvature or sensor confidence levels.</li>
+            <li>Further fine-tune turning angles and pauses to more smoothly make turns.</li>
+            <li>Explore machine learning techniques for adaptive line-following.</li>
+            <li>Store run data (e.g., intersections encountered, error logs) for performance analysis.</li>
+        </ul>
+        <h2>Team Members & Work Log</h2>
+        <ul>
+            <li><a href="worklog.html">View detailed work log →</a></li>
+        </ul>
+    </div>
+</body>
+
+</html>
